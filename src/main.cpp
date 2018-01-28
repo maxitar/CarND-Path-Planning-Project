@@ -10,6 +10,7 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
 #include "spline.h"
+#include <algorithm>
 
 // for convenience
 using json = nlohmann::json;
@@ -87,7 +88,7 @@ int NextWaypoint(double x, double y, double theta, const std::vector<double> &ma
 }
 
 // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
-std::vector<double> getFrenet(double x, double y, double theta, const std::vector<double> &maps_x, const std::vector<double> &maps_y)
+std::pair<double,double> getFrenet(double x, double y, double theta, const std::vector<double> &maps_x, const std::vector<double> &maps_y)
 {
   int next_wp = NextWaypoint(x,y, theta, maps_x,maps_y);
 
@@ -171,8 +172,10 @@ std::pair<std::vector<double>, std::vector<double>> map2car(double car_x, double
   std::vector<double> new_y(n);
 
   for (int i = 0; i < n; ++i) {
-    new_x[i] = x[i]*cos_t - y[i]*sin_t - car_x;
-    new_y[i] = x[i]*sin_t + y[i]*cos_t - car_y;
+    double x_0 = x[i]-car_x;
+    double y_0 = y[i]-car_y;
+    new_x[i] = x_0*cos_t - y_0*sin_t;// - car_x;
+    new_y[i] = x_0*sin_t + y_0*cos_t;// - car_y;
   }
 
   return {std::move(new_x), std::move(new_y)};
@@ -259,8 +262,8 @@ int main() {
           double car_speed = j[1]["speed"];
 
           // Previous path data given to the Planner
-          auto previous_path_x = j[1]["previous_path_x"];
-          auto previous_path_y = j[1]["previous_path_y"];
+          std::vector<double> previous_path_x = j[1]["previous_path_x"];
+          std::vector<double> previous_path_y = j[1]["previous_path_y"];
           // Previous path's end s and d values 
           double end_path_s = j[1]["end_path_s"];
           double end_path_d = j[1]["end_path_d"];
@@ -274,32 +277,76 @@ int main() {
           std::vector<double> next_x_vals(path_pts_num);
           std::vector<double> next_y_vals(path_pts_num);
 
-          int pts_to_copy = std::min(10, previous_path_x.size());
-          std::vector<double> temp_x(pts_to_copy+3);
-          std::vector<double> temp_y(pts_to_copy+3);
-          std::copy(previous_path_x.begin(), previous_path_x.begin()+pts_to_copy, temp_x.begin());
-          std::copy(previous_path_y.begin(), previous_path_y.begin()+pts_to_copy, temp_y.begin());
-          for (int i = 0; i < 3; ++i) {
-            auto xy = getXY(car_s+(i+1)*30,car_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-            temp_x[pts_to_copy+i] = xy.first;
-            temp_y[pts_to_copy+i] = xy.second;
+          int pts_to_copy = std::min(10, int(previous_path_x.size()));
+          std::vector<double> temp_x;
+          std::vector<double> temp_y;
+          if (previous_path_x.size() == 0) {
+            temp_x.reserve(4);
+            temp_y.reserve(4);
+            temp_x.push_back(car_x);
+            temp_y.push_back(car_y);
+            pts_to_copy = 1;
+            next_x_vals[0] = car_x;
+            next_y_vals[0] = car_y;
           }
+          else {
+            temp_x.reserve(pts_to_copy+3);
+            temp_y.reserve(pts_to_copy+3);
+            temp_x.resize(pts_to_copy);
+            temp_y.resize(pts_to_copy);
+            std::copy(previous_path_x.begin(), previous_path_x.begin()+pts_to_copy, temp_x.begin());
+            std::copy(previous_path_y.begin(), previous_path_y.begin()+pts_to_copy, temp_y.begin());
+            std::copy(previous_path_x.begin(), previous_path_x.begin()+pts_to_copy, next_x_vals.begin());
+            std::copy(previous_path_y.begin(), previous_path_y.begin()+pts_to_copy, next_y_vals.begin());
+          }
+
+          std::copy(previous_path_x.begin(), previous_path_x.end(), std::ostream_iterator<double>(std::cout, " "));
+          std::cout << '\n';
+          std::copy(previous_path_y.begin(), previous_path_y.end(), std::ostream_iterator<double>(std::cout, " "));
+          std::cout << '\n';
+          double last_x = temp_x.back();
+          double last_y = temp_y.back();
+          car_yaw = deg2rad(car_yaw);
+          auto sd = getFrenet(last_x, last_y, car_yaw, map_waypoints_x, map_waypoints_y);
+          for (int i = 0; i < 3; ++i) {
+            auto xy = getXY(sd.first+(i+1)*15, 6.0, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            temp_x.push_back(xy.first);
+            temp_y.push_back(xy.second);
+          }
+
+          std::copy(temp_x.begin(), temp_x.end(), std::ostream_iterator<double>(std::cout, " "));
+          std::cout << '\n';
           auto car_coords = map2car(car_x, car_y, car_yaw, temp_x, temp_y);
           temp_x = std::move(car_coords.first);
           temp_y = std::move(car_coords.second);
+          std::copy(temp_x.begin(), temp_x.end(), std::ostream_iterator<double>(std::cout, " "));
+          std::cout << '\n';
+          std::cout << car_x << " " << car_y << " " << car_yaw << std::endl;
           tk::spline path;
           path.set_points(temp_x, temp_y);
+          auto map2car = [sin_t = std::sin(car_yaw), cos_t = std::cos(car_yaw), car_x, car_y](double x, double y) -> std::pair<double, double> {
+            return {cos_t*(x-car_x) + sin_t*(y-car_y), -sin_t*(x-car_x) + cos_t*(y-car_y)};
+          };
           auto car2map = [sin_t = std::sin(car_yaw), cos_t = std::cos(car_yaw), car_x, car_y](double x, double y) -> std::pair<double, double> {
             return {cos_t*x - sin_t*y + car_x, sin_t*x + cos_t*y + car_y};
           };
 
-          std::copy(previous_path_x.begin(), previous_path_x.begin()+pts_to_copy, new_x_vals.begin());
-          std::copy(previous_path_y.begin(), previous_path_y.begin()+pts_to_copy, new_y_vals.begin());
-
+          auto last_xy = map2car(last_x, last_y);
+          last_x = last_xy.first;
+          last_y = last_xy.second;
           for (int i = pts_to_copy; i < path_pts_num; ++i) {
-            previous_path_x
+            double x = last_x+0.44*(i+1-pts_to_copy);
+            //double x = 0.44*i;
+            auto xy = car2map(x, path(x));
+            next_x_vals[i] = xy.first;
+            next_y_vals[i] = xy.second;
           }
+          std::copy(next_x_vals.begin(), next_x_vals.end(), std::ostream_iterator<double>(std::cout, " "));
+          std::cout << '\n';
+          std::copy(next_y_vals.begin(), next_y_vals.end(), std::ostream_iterator<double>(std::cout, " "));
+          std::cout << '\n';
           std::cout << previous_path_x.size() << std::endl;
+          std::cout << '\n';
           // TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
 //          for (int i = 0; i < 50; ++i) {
 //            double s = car_s + 0.3*(i+1);
