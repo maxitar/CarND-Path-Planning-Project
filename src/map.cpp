@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <cmath>
+#include <algorithm>
 
 Map::Map() {
   // Waypoint map to read from
@@ -124,7 +125,7 @@ std::pair<double,double> Map::getXY(double s, double d) const {
   int prev_wp = -1;
 
   int num_wp_s = map_waypoints_s.size();
-  while(s > map_waypoints_s[prev_wp+1] && (prev_wp < (int)(num_wp_s - 1) )) {
+  while((prev_wp < (int)(num_wp_s - 1)) && s > map_waypoints_s[prev_wp+1]) {
     prev_wp++;
   }
 

@@ -7,7 +7,7 @@
 #include <cmath>
 
 // For converting back and forth between radians and degrees.
-constexpr double pi() { return M_PI; }
+constexpr double pi() { return 3.1415926535897932; }
 inline double deg2rad(double x) { return x * pi() / 180; }
 inline double rad2deg(double x) { return x * 180 / pi(); }
 inline double distance(double x1, double y1, double x2, double y2)

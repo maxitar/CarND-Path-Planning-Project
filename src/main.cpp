@@ -47,7 +47,7 @@ int main() {
           std::vector<double> next_x_vals;
           std::vector<double> next_y_vals;
 
-          std::tie(next_x_vals, next_y_vals) = gen.getPath();
+          std::tie(next_x_vals, next_y_vals) = gen.getOptimalTrajectory();
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
@@ -91,7 +91,7 @@ int main() {
   });
 
   int port = 4567;
-  if (h.listen(port)) {
+  if (h.listen("127.0.0.1", port)) {
     std::cout << "Listening to port " << port << std::endl;
   } else {
     std::cerr << "Failed to listen to port" << std::endl;
