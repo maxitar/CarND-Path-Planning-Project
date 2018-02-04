@@ -18,17 +18,31 @@ class TrajectoryGenerator {
   const double dt = 0.02;
   const int num_lanes = 3;
   const double lanes[3] = { 2.0, 6.0, 10.0 };
+  class FSM {
+    enum states {KL, PLC, LC};
+    states state = KL;
+    int origin_lane = 1;
+    int target_lane = 1;
+    int final_lane = 1;
+    int steps_in_state = 0;
+    TrajectoryGenerator& gen;
+  public:
+    FSM(TrajectoryGenerator& generator) : gen(generator) {}
+  } fsm{*this};
+
   double check_collision(const tk::spline& path, double last_x, double speed);
   bool check_collision(const std::vector<double>& path_x, const std::vector<double>& path_y);
   tk::spline getPath(int target_lane, int num_pts_prev);
-  std::pair<std::vector<double>, std::vector<double>> generateTrajectory(int target_lane, double target_velocity);
+  std::pair<std::vector<double>, std::vector<double>> generateTrajectory
+    (int target_lane, double target_velocity, int pts_to_copy);
   int getLane(double d);
   std::array<double, 3> getLaneSpeeds(double front_distance = 50., double back_distance = 20.);
   std::pair<double, double> findClosestCarInLane();
   bool isLaneClear(int target_lane, double margin_s);
   int fastestLane(const std::array<double, 3>& lane_speed);
 public:
-  TrajectoryGenerator(const nlohmann::json& telemetry, const Map& map_);
+  TrajectoryGenerator(const Map& map_) : map(map_) {};
+  void update(const nlohmann::json& telemetry);
   std::pair<std::vector<double>, std::vector<double>> getOptimalTrajectory();
 };
 

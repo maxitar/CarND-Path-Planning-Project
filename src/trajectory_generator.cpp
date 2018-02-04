@@ -116,11 +116,12 @@ tk::spline TrajectoryGenerator::getPath(int target_lane, int num_pts_prev) {
   return path;
 }
 
-std::pair<std::vector<double>, std::vector<double>> TrajectoryGenerator::generateTrajectory(int target_lane, double target_velocity)
+std::pair<std::vector<double>, std::vector<double>> 
+TrajectoryGenerator::generateTrajectory(int target_lane, double target_velocity, int pts_to_copy)
 {
-  int pts_to_copy = prev_path_x.size();
-  int path_pts_num = 50; // 50 points for 1 second of driving
-  if (target_lane != getLane(car.d()) && pts_to_copy <= 50) { //if target lane is different, but also if we are not in the middle of another lane change
+  //int pts_to_copy = prev_path_x.size();
+  int path_pts_num = 30; // 50 points for 1 second of driving
+  if (target_lane != getLane(car.d()) && pts_to_copy <= path_pts_num) { //if target lane is different, but also if we are not in the middle of another lane change
     path_pts_num = 100; // increase to 2 seconds to also get the change of lanes
   }
   double target_v = target_velocity; //meters per second
@@ -251,7 +252,7 @@ int TrajectoryGenerator::fastestLane(const std::array<double, 3>& lane_speed) {
   return std::distance(std::begin(lane_speed), std::max_element(std::begin(lane_speed), std::end(lane_speed)));
 }
 
-TrajectoryGenerator::TrajectoryGenerator(const nlohmann::json& j, const Map& map_) : map(map_) {
+void TrajectoryGenerator::update(const nlohmann::json& j) {
   // Main car's localization Data
   double car_x = j[1]["x"];
   double car_y = j[1]["y"];
@@ -272,6 +273,7 @@ TrajectoryGenerator::TrajectoryGenerator(const nlohmann::json& j, const Map& map
 
   // Sensor Fusion Data, a list of all other cars on the same side of the road.
   auto sensor_fusion = j[1]["sensor_fusion"];
+  agents.clear();
   for (auto&& agent : sensor_fusion) {
     auto iter = agent.begin();
     int    id = *iter; ++iter;
@@ -293,7 +295,7 @@ std::pair<std::vector<double>, std::vector<double>> TrajectoryGenerator::getOpti
   int target_lane = car_lane;
   if (nearestCar.first < 4) {
     std::cout << nearestCar.first << " " << nearestCar.first << std::endl;
-    return generateTrajectory(target_lane, nearestCar.second - 5.);
+    return generateTrajectory(target_lane, nearestCar.second - 5., prev_path_x.size());
   }
   else {
     auto lane_speeds = getLaneSpeeds(40., 3.);
@@ -303,7 +305,7 @@ std::pair<std::vector<double>, std::vector<double>> TrajectoryGenerator::getOpti
       else target_lane = fastest_lane;
     }
     double target_speed = lane_speeds[target_lane];
-    std::tie(next_x_vals, next_y_vals) = generateTrajectory(target_lane, target_speed);
+    std::tie(next_x_vals, next_y_vals) = generateTrajectory(target_lane, target_speed, prev_path_x.size());
     //if (target_lane != car_lane && !check_collision(next_x_vals, next_y_vals)) {
     if (target_lane != car_lane && isLaneClear(target_lane, 8)) {
       std::cout << "Change lane!" << std::endl;
@@ -311,112 +313,69 @@ std::pair<std::vector<double>, std::vector<double>> TrajectoryGenerator::getOpti
     }
     else {
       if (target_lane != car_lane && check_collision(next_x_vals, next_y_vals)) std::cout << "Collision!" << std::endl;
-      return generateTrajectory(car_lane, lane_speeds[car_lane]);
+      return generateTrajectory(car_lane, lane_speeds[car_lane], prev_path_x.size());
     }
   }
-  int num_pts = next_x_vals.size();
-  std::vector<double> s(num_pts, 0.);
-  for (int i = 1; i < num_pts; ++i) {
-    s[i] = s[i - 1] + distance(next_x_vals[i], next_y_vals[i], next_x_vals[i-1], next_y_vals[i-1]);
-  }
-  double avg_acc = 0.;
-  for (int i = 1; i < num_pts - 1; ++i) {
-    double acc = (-s[i - 1] + 2 * s[i] - s[i + 1]) / (dt*dt);
-    acc = std::fabs(acc);
-    avg_acc += acc;
-    if (acc > 9) {
-      //std::cout << acc << '\n';
-    }
-  }
-  //std::cout << "Total amount travelled: " << s.back() << '\n';
-  std::cout << car.d() << '\n';
-  avg_acc /= num_pts - 2;
-  if (avg_acc > 9.5) {
-    std::cout << avg_acc << '\n';
-  }
-  //std::cout << std::endl;
-  //double time_to_collision = check_collision(path, last_x, speed);
-  //if (time_to_collision > 0.1) {
-  //  std::cout << "Estimated time to collision at current speeds: " << time_to_collision << "s\n";
-  //}
-  //std::cout << "Final speed: " << speed << std::endl;
-  //num_prev = next_x_vals.size();
-  //if (num_prev > 1)
-  //  std::cout << "Calculated speed: " << distance(next_x_vals[num_prev - 1], next_y_vals[num_prev - 1], next_x_vals[num_prev - 2], next_y_vals[num_prev - 2]) / dt << std::endl << std::endl;
   return {next_x_vals, next_y_vals};
 }
-
+//
 //std::pair<std::vector<double>, std::vector<double>> TrajectoryGenerator::getOptimalTrajectory() {
-//  int path_pts_num = 50;
-//  double target_v = 22; //meters per second
 //  std::vector<double> next_x_vals;
-//  next_x_vals.reserve(path_pts_num);
 //  std::vector<double> next_y_vals;
-//  next_y_vals.reserve(path_pts_num);
-//  int pts_to_copy = std::min(30, int(prev_path_x.size()));
-//  std::vector<double> temp_x;
-//  std::vector<double> temp_y;
-//  if (prev_path_x.size() == 0) {
-//    temp_x.reserve(4);
-//    temp_y.reserve(4);
-//    temp_x.push_back(car.x());
-//    temp_y.push_back(car.y());
-//    pts_to_copy = 1;
-//    //next_x_vals[0] = car.x();
-//    //next_y_vals[0] = car.y();
-//    next_x_vals.push_back(car.x());
-//    next_y_vals.push_back(car.y());
+//  int car_lane = getLane(car.d());
+//  auto nearestCar = findClosestCarInLane();
+//  int target_lane = car_lane;
+//  if (nearestCar.first < 4) {
+//    std::cout << nearestCar.first << " " << nearestCar.first << std::endl;
+//    return generateTrajectory(target_lane, nearestCar.second - 5., prev_path_x.size());
 //  }
 //  else {
-//    temp_x.reserve(pts_to_copy+3);
-//    temp_y.reserve(pts_to_copy+3);
-//    temp_x.resize(pts_to_copy);
-//    temp_y.resize(pts_to_copy);
-//    std::copy(prev_path_x.begin(), prev_path_x.begin()+pts_to_copy, temp_x.begin());
-//    std::copy(prev_path_y.begin(), prev_path_y.begin()+pts_to_copy, temp_y.begin());
-//    std::copy(prev_path_x.begin(), prev_path_x.begin()+pts_to_copy, std::back_inserter(next_x_vals));
-//    std::copy(prev_path_y.begin(), prev_path_y.begin()+pts_to_copy, std::back_inserter(next_y_vals));
+//    auto lane_speeds = getLaneSpeeds(40., 3.);
+//    int fastest_lane = fastestLane(lane_speeds);
+//    if (lane_speeds[fastest_lane] > lane_speeds[car_lane] + 2.0) {
+//      if (std::abs(fastest_lane - car_lane) == 2) target_lane = 1;
+//      else target_lane = fastest_lane;
+//    }
+//    double target_speed = lane_speeds[target_lane];
+//    std::tie(next_x_vals, next_y_vals) = generateTrajectory(target_lane, target_speed, prev_path_x.size());
+//    //if (target_lane != car_lane && !check_collision(next_x_vals, next_y_vals)) {
+//    if (target_lane != car_lane && isLaneClear(target_lane, 8)) {
+//      std::cout << "Change lane!" << std::endl;
+//      return { next_x_vals, next_y_vals };
+//    }
+//    else {
+//      if (target_lane != car_lane && check_collision(next_x_vals, next_y_vals)) std::cout << "Collision!" << std::endl;
+//      return generateTrajectory(car_lane, lane_speeds[car_lane], prev_path_x.size());
+//    }
 //  }
-//
-//  double last_x = temp_x.back();
-//  double last_y = temp_y.back();
-//  auto sd = map.getFrenet(last_x, last_y, car.yaw());
-//  for (int i = 0; i < 3; ++i) {
-//    auto xy = map.getXY(sd.first+(i+1)*15, 6.0);
-//    temp_x.push_back(xy.first);
-//    temp_y.push_back(xy.second);
+//  int num_pts = next_x_vals.size();
+//  std::vector<double> s(num_pts, 0.);
+//  for (int i = 1; i < num_pts; ++i) {
+//    s[i] = s[i - 1] + distance(next_x_vals[i], next_y_vals[i], next_x_vals[i-1], next_y_vals[i-1]);
 //  }
-//
-//  for (int i = 0, n = temp_x.size(); i < n; ++i) {
-//    std::tie(temp_x[i], temp_y[i]) = car.from_map(temp_x[i], temp_y[i]);
+//  double avg_acc = 0.;
+//  for (int i = 1; i < num_pts - 1; ++i) {
+//    double acc = (-s[i - 1] + 2 * s[i] - s[i + 1]) / (dt*dt);
+//    acc = std::fabs(acc);
+//    avg_acc += acc;
+//    if (acc > 9) {
+//      //std::cout << acc << '\n';
+//    }
 //  }
-//  
-//  tk::spline path;
-//  path.set_points(temp_x, temp_y);
-//
-//  auto last_xy = car.from_map(last_x, last_y);
-//  last_x = last_xy.first;
-//  last_y = last_xy.second;
-//  double speed = car.speed();
-//  int num_prev = next_x_vals.size();
-//  if (num_prev > 1) {
-//    speed = (next_x_vals[num_prev-1] - next_x_vals[num_prev-2])/dt;
+//  //std::cout << "Total amount travelled: " << s.back() << '\n';
+//  std::cout << car.d() << '\n';
+//  avg_acc /= num_pts - 2;
+//  if (avg_acc > 9.5) {
+//    std::cout << avg_acc << '\n';
 //  }
-//  std::cout << num_prev << " " <<  car.speed() << " " << speed << std::endl;
-//  //double dx = speed; //convert to 
-//  for (int i = pts_to_copy; i < path_pts_num; ++i) {
-//    if (speed < 22) speed += 0.2;
-//    if (speed > 22) speed = 22;
-//    double dx = speed*dt; //convert to 
-//    //double x = last_x+0.44*(i+1-pts_to_copy);
-//    //double x = last_x+dx*(i+1-pts_to_copy);
-//    double x = last_x+dx;
-//    last_x = x;
-//    //double x = 0.44*i;
-//    next_x_vals.push_back(0);
-//    next_y_vals.push_back(0);
-//    std::tie(next_x_vals[i], next_y_vals[i]) = car.to_map(x, path(x));
-//  }
-//  std::cout << "Final speed: " << speed << std::endl;
+//  //std::cout << std::endl;
+//  //double time_to_collision = check_collision(path, last_x, speed);
+//  //if (time_to_collision > 0.1) {
+//  //  std::cout << "Estimated time to collision at current speeds: " << time_to_collision << "s\n";
+//  //}
+//  //std::cout << "Final speed: " << speed << std::endl;
+//  //num_prev = next_x_vals.size();
+//  //if (num_prev > 1)
+//  //  std::cout << "Calculated speed: " << distance(next_x_vals[num_prev - 1], next_y_vals[num_prev - 1], next_x_vals[num_prev - 2], next_y_vals[num_prev - 2]) / dt << std::endl << std::endl;
 //  return {next_x_vals, next_y_vals};
 //}
