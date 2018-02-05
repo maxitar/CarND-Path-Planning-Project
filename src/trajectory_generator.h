@@ -34,7 +34,7 @@ class TrajectoryGenerator {
   } fsm{*this};
 
   double check_collision(const tk::spline& path, double last_x, double speed);
-  std::pair<bool,double> check_collision(const std::vector<double>& path_x, const std::vector<double>& path_y);
+  std::tuple<bool,double,double> check_collision(const std::vector<double>& path_x, const std::vector<double>& path_y);
   tk::spline getPath(int target_lane, int num_pts_prev);
   std::pair<std::vector<double>, std::vector<double>> generateTrajectory
     (int target_lane, double target_velocity, int pts_to_copy);

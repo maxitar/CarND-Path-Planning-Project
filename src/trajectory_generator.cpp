@@ -31,9 +31,9 @@ void TrajectoryGenerator::FSM::update_state() {
   auto front_vehicle = gen.findClosestCarInLane();
   double front_dist = front_vehicle.first;
   double front_speed = front_vehicle.second;
+  int fastest_lane = fastestLane(lane_speeds);
   if (state == KL) {
     steps_in_lane += steps_in_lane < 100 ? 1 : 0;
-    int fastest_lane = fastestLane(lane_speeds);
     if (steps_in_lane == 100 && lane_speeds[fastest_lane] > lane_speeds[origin_lane] + 1.0) {
       if (std::abs(fastest_lane - origin_lane) == 2) target_lane = 1;
       else target_lane = fastest_lane;
@@ -63,7 +63,7 @@ void TrajectoryGenerator::FSM::update_state() {
       target_speed = front_speed - 2;
       return;
     }
-    if (lane_speeds[final_lane] < lane_speeds[origin_lane] + 1.0) {
+    if (lane_speeds[final_lane] < lane_speeds[origin_lane] + 1.0 || final_lane != fastest_lane) {
       target_lane = origin_lane;
       final_lane = origin_lane;
       state = KL;
@@ -175,7 +175,7 @@ double TrajectoryGenerator::check_collision(const tk::spline & path, double last
   return 0.0;
 }
 
-std::pair<bool, double> TrajectoryGenerator::check_collision(const std::vector<double>& path_x, const std::vector<double>& path_y) {
+std::tuple<bool, double, double> TrajectoryGenerator::check_collision(const std::vector<double>& path_x, const std::vector<double>& path_y) {
   int num_pts = path_x.size();
   std::vector<double> s_traj;
   std::vector<double> d_traj;
@@ -188,14 +188,22 @@ std::pair<bool, double> TrajectoryGenerator::check_collision(const std::vector<d
   }
   double min_time = 1000;
   double speed = 50.;
+  bool collision_detected = false;
   for (auto&& agent : agents) {
     double current_s = agent.s;
     int size_traj = s_traj.size();
     for (int i = 0; i < size_traj; ++i) {
-      if (collision(s_traj[i], d_traj[i], agent.s + agent.speed*i*dt, agent.d, 4., 2.)) return {true, agent.speed};
+      double time = i*dt;
+      if (collision(s_traj[i], d_traj[i], agent.s + agent.speed*time, agent.d, 4., 2.) && time < min_time) {
+        //return {true, agent.speed};
+        min_time = time;
+        speed = agent.speed;
+        collision_detected = true;
+        break;
+      }
     }
   }
-  return {false, 0.};
+  return std::tuple<bool, double, double>(collision_detected, speed, min_time);
 }
 
 tk::spline TrajectoryGenerator::getPath(int target_lane, int num_pts_prev) {
@@ -428,13 +436,15 @@ std::pair<std::vector<double>, std::vector<double>> TrajectoryGenerator::getOpti
   //return generateTrajectory(lane_speed.first, lane_speed.second, prev_path_x.size());
   auto trajectory = generateTrajectory(lane_speed.first, lane_speed.second, 30);
   auto collision = check_collision(trajectory.first, trajectory.second);
-  if (collision.first == false) {
-    return trajectory;
-  }
-  else {
+  bool collision_detected = std::get<0>(collision);
+  double time_to_collision = std::get<2>(collision);
+  if (collision_detected && time_to_collision < 2.) {
+    double agent_speed = std::get<1>(collision);
     std::cout << "Collision detected!\n";
-    return generateTrajectory(lane_speed.first, collision.second, 5);
+    double target_speed = std::min(agent_speed, lane_speed.second);
+    return generateTrajectory(lane_speed.first, target_speed, 5);
   }
+  return trajectory;
 }
 //
 //std::pair<std::vector<double>, std::vector<double>> TrajectoryGenerator::getOptimalTrajectory() {
