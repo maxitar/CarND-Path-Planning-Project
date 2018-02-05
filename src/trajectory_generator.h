@@ -24,10 +24,13 @@ class TrajectoryGenerator {
     int origin_lane = 1;
     int target_lane = 1;
     int final_lane = 1;
-    int steps_in_state = 0;
+    int steps_in_lane = 0;
+    double target_speed = 22.;
     TrajectoryGenerator& gen;
+    void update_state();
   public:
     FSM(TrajectoryGenerator& generator) : gen(generator) {}
+    std::pair<int,double> get_lane_speed();
   } fsm{*this};
 
   double check_collision(const tk::spline& path, double last_x, double speed);
@@ -35,11 +38,10 @@ class TrajectoryGenerator {
   tk::spline getPath(int target_lane, int num_pts_prev);
   std::pair<std::vector<double>, std::vector<double>> generateTrajectory
     (int target_lane, double target_velocity, int pts_to_copy);
-  int getLane(double d);
   std::array<double, 3> getLaneSpeeds(double front_distance = 50., double back_distance = 20.);
   std::pair<double, double> findClosestCarInLane();
+  std::pair<double, double> findNextCarInLane(int lane, bool in_front);
   bool isLaneClear(int target_lane, double margin_s);
-  int fastestLane(const std::array<double, 3>& lane_speed);
 public:
   TrajectoryGenerator(const Map& map_) : map(map_) {};
   void update(const nlohmann::json& telemetry);

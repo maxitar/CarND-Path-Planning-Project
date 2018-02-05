@@ -15,6 +15,76 @@ bool collision(double car_s, double car_d, double agent_s, double agent_d, doubl
   return (std::fabs(distance) < margin_s && std::fabs(car_d-agent_d) < margin_d);
 }
 
+int getLane(double d) {
+  int result = int(d) / 4;
+  result = result > 2 ? 2 : result;
+  result = result < 0 ? 0 : result;
+  return result;
+}
+
+int fastestLane(const std::array<double, 3>& lane_speed) {
+  return std::distance(std::begin(lane_speed), std::max_element(std::begin(lane_speed), std::end(lane_speed)));
+}
+
+void TrajectoryGenerator::FSM::update_state() {
+  std::array<double, 3> lane_speeds = gen.getLaneSpeeds(50, 3);
+  auto front_vehicle = gen.findClosestCarInLane();
+  double front_dist = front_vehicle.first;
+  double front_speed = front_vehicle.second;
+  if (state == KL) {
+    steps_in_lane += steps_in_lane < 100 ? 1 : 0;
+    int fastest_lane = fastestLane(lane_speeds);
+    if (steps_in_lane == 100 && lane_speeds[fastest_lane] > lane_speeds[origin_lane] + 1.0) {
+      if (std::abs(fastest_lane - origin_lane) == 2) target_lane = 1;
+      else target_lane = fastest_lane;
+      final_lane = fastest_lane;
+      state = PLC;
+    } else {
+      if (front_dist < 10) {
+        target_speed = front_speed - 2;
+      }
+      else if (front_dist < 20) {
+        target_speed = front_speed;
+      }
+      else {
+        target_speed = gen.car.max_speed;
+      }
+    }
+  }
+  // next lane front and back cars
+  auto nl_front = gen.findNextCarInLane(target_lane, true);
+  auto nl_back = gen.findNextCarInLane(target_lane, false);
+  if (state == PLC) {
+    if (nl_back.first > 10 && -nl_back.first + 3*(nl_back.second - gen.car.speed()) < -10) {
+      if (nl_front.first > 10 && nl_front.first + 3*(nl_front.second - gen.car.speed()) > 10) {
+        state = LC;
+      }
+      else {
+        target_speed = std::min(front_speed, nl_front.second - 1.);
+      }
+    }
+    else {
+      target_speed = std::min(front_speed, nl_back.second - 1.);
+    }
+  }
+  if (state == LC) {
+    //int car_lane = getLane(gen.car.d());
+    if (std::fabs(gen.car.d()-gen.lanes[target_lane]) > 1.) {
+      target_speed = std::min(front_speed, nl_front.second);
+    } else {
+      target_speed = nl_front.second;
+      steps_in_lane = 0;
+      state = KL;
+      origin_lane = target_lane;
+    }
+  }
+}
+
+std::pair<int,double> TrajectoryGenerator::FSM::get_lane_speed() {
+  if (state == KL || state == PLC) return {origin_lane, target_speed};
+  else return {target_lane, target_speed};
+}
+
 double TrajectoryGenerator::check_collision(const tk::spline & path, double last_x, double speed) {
   std::vector<double> s_traj;
   std::vector<double> d_traj;
@@ -76,7 +146,7 @@ tk::spline TrajectoryGenerator::getPath(int target_lane, int num_pts_prev) {
   std::vector<double> temp_y;
 
   double final_s = 90.;
-  double step_distance = 20.;
+  double step_distance = 30.;
   int steps = final_s / step_distance;
   double final_d = lanes[target_lane];
 
@@ -98,7 +168,8 @@ tk::spline TrajectoryGenerator::getPath(int target_lane, int num_pts_prev) {
   auto sd = map.getFrenet(last_x, last_y, car.yaw());
   double current_d = sd.second;
   //double step_d = (current_d + final_d)*0.2;
-  double step_d = (final_d - current_d)*0.5;
+  //double step_d = (final_d - current_d)*0.5;
+  double step_d = (final_d - current_d);
   for (int i = 0; i < steps; ++i) {
     current_d += step_d;
     current_d = std::fabs(current_d - final_d) < 0.5 ? final_d : current_d;
@@ -194,13 +265,6 @@ TrajectoryGenerator::generateTrajectory(int target_lane, double target_velocity,
   return { next_x_vals, next_y_vals };
 }
 
-int TrajectoryGenerator::getLane(double d) {
-  int result = int(d) / 4;
-  result = result > 2 ? 2 : result;
-  result = result < 0 ? 0 : result;
-  return result;
-}
-
 // @param front_distance  meters, distance to agents in front of the car
 // @param back_distance  meters, distance to agents behind the car
 std::array<double, 3> TrajectoryGenerator::getLaneSpeeds(double front_distance, double back_distance) {
@@ -234,6 +298,24 @@ std::pair<double, double> TrajectoryGenerator::findClosestCarInLane() {
   return { distance, speed };
 }
 
+// find the nearest agent in front of the car and return its distance and speed
+std::pair<double, double> TrajectoryGenerator::findNextCarInLane(int lane, bool in_front) {
+  int car_lane = getLane(car.d());
+  double distance = map.max_s;
+  double speed = car.max_speed;
+  double coef = in_front ? 1. : -1;
+  for (auto&& agent : agents) {
+    if (getLane(agent.d) == lane) {
+      double agent_to_car = coef*subtract_s(agent.s, car.s()); //compute agent.s - car.s
+      if (agent_to_car >= 0 && agent_to_car < distance) {
+        distance = agent_to_car;
+        speed = agent.speed;
+      }
+    }
+  }
+  return { distance, speed };
+}
+
 bool TrajectoryGenerator::isLaneClear(int target_lane, double margin_s) {
   double distance = map.max_s;
   double speed = car.max_speed;
@@ -246,10 +328,6 @@ bool TrajectoryGenerator::isLaneClear(int target_lane, double margin_s) {
     }
   }
   return true;
-}
-
-int TrajectoryGenerator::fastestLane(const std::array<double, 3>& lane_speed) {
-  return std::distance(std::begin(lane_speed), std::max_element(std::begin(lane_speed), std::end(lane_speed)));
 }
 
 void TrajectoryGenerator::update(const nlohmann::json& j) {
