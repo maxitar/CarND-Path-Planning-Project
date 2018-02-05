@@ -39,6 +39,9 @@ void TrajectoryGenerator::FSM::update_state() {
       else target_lane = fastest_lane;
       final_lane = fastest_lane;
       state = PLC;
+      std::cout << "Changing state to PLC.\n";
+      std::cout << "Origin lane is " << origin_lane << " with speed " << lane_speeds[origin_lane] << "mps\n";
+      std::cout << "Final lane is " << fastest_lane << " with speed " << lane_speeds[fastest_lane] << "mps\n";
     } else {
       if (front_dist < 10) {
         target_speed = front_speed - 2;
@@ -55,32 +58,85 @@ void TrajectoryGenerator::FSM::update_state() {
   auto nl_front = gen.findNextCarInLane(target_lane, true);
   auto nl_back = gen.findNextCarInLane(target_lane, false);
   if (state == PLC) {
+    if (front_dist < 10) {
+      std::cout << "Too close during PLC at: " << front_dist << "\n";
+      target_speed = front_speed - 2;
+      return;
+    }
+    if (lane_speeds[final_lane] < lane_speeds[origin_lane] + 1.0) {
+      target_lane = origin_lane;
+      final_lane = origin_lane;
+      state = KL;
+      std::cout << "Reverting state back to KL.\n";
+      //steps_in_lane = 0;
+      return;
+    }
     if (nl_back.first > 10 && -nl_back.first + 3*(nl_back.second - gen.car.speed()) < -10) {
       if (nl_front.first > 10 && nl_front.first + 3*(nl_front.second - gen.car.speed()) > 10) {
+        std::cout << "Changing state to LC.\n";
         state = LC;
       }
       else {
-        target_speed = std::min(front_speed, nl_front.second - 1.);
+        if (front_dist < 20) {
+          if (front_speed-nl_front.second < 1.) { 
+            std::cout << "Hit front condition for " << front_speed << " and " << nl_front.second << "\n";
+            target_speed = std::min(front_speed, nl_front.second - 1.);
+          } else { 
+            target_speed = front_speed;
+          }
+        } else {
+          target_speed = gen.car.max_speed;
+        }
       }
     }
     else {
-      target_speed = std::min(front_speed, nl_back.second - 1.);
+      if (front_dist < 15) {
+        if (front_dist + nl_back.first < 20 && front_speed-nl_back.second < 1.) { 
+          std::cout << "Hit back condition for " << front_speed << " and " << nl_back.second << "\n";
+          target_speed = std::min(front_speed, nl_back.second - 1.);
+        } else { 
+          target_speed = front_speed;
+        }
+      } else {
+        target_speed = gen.car.max_speed;
+      }
+//      if (front_dist+nl_back_first < 15 && front_speed-nl_back.second < 1.) { 
+//        std::cout << "Hit back condition for " << front_speed << " and " << nl_back.second << "\n";
+//        target_speed = std::min(front_speed, nl_back.second - 1.);
+//      } else if (front_dist < 20) {
+//        target_speed = front_speed;
+//      } else {
+//        target_speed = gen.car.max_speed;
+//      }
     }
   }
   if (state == LC) {
     //int car_lane = getLane(gen.car.d());
     if (std::fabs(gen.car.d()-gen.lanes[target_lane]) > 1.) {
-      target_speed = std::min(front_speed, nl_front.second);
+      if (front_dist < 10) {
+        target_speed = std::min(front_speed, nl_front.second);
+      }
+      else {
+        target_speed = nl_front.first < 30 ? nl_front.second : gen.car.max_speed;
+      }
     } else {
-      target_speed = nl_front.second;
-      steps_in_lane = 0;
-      state = KL;
+      target_speed = nl_front.first < 30 ? nl_front.second : gen.car.max_speed;
       origin_lane = target_lane;
+      if (target_lane == final_lane) {
+        steps_in_lane = 0;
+        state = KL;
+        std::cout << "Changing state to KL.\n";
+      } else {
+        target_lane = final_lane;
+        state = PLC;
+        std::cout << "Changing state to PLC.\n";
+      }
     }
   }
 }
 
 std::pair<int,double> TrajectoryGenerator::FSM::get_lane_speed() {
+  update_state();
   if (state == KL || state == PLC) return {origin_lane, target_speed};
   else return {target_lane, target_speed};
 }
@@ -119,7 +175,7 @@ double TrajectoryGenerator::check_collision(const tk::spline & path, double last
   return 0.0;
 }
 
-bool TrajectoryGenerator::check_collision(const std::vector<double>& path_x, const std::vector<double>& path_y) {
+std::pair<bool, double> TrajectoryGenerator::check_collision(const std::vector<double>& path_x, const std::vector<double>& path_y) {
   int num_pts = path_x.size();
   std::vector<double> s_traj;
   std::vector<double> d_traj;
@@ -131,14 +187,15 @@ bool TrajectoryGenerator::check_collision(const std::vector<double>& path_x, con
     d_traj.push_back(sd.second);
   }
   double min_time = 1000;
+  double speed = 50.;
   for (auto&& agent : agents) {
     double current_s = agent.s;
     int size_traj = s_traj.size();
     for (int i = 0; i < size_traj; ++i) {
-      if (collision(s_traj[i], d_traj[i], agent.s + agent.speed*i*dt, agent.d, 6., 2.5)) return true;
+      if (collision(s_traj[i], d_traj[i], agent.s + agent.speed*i*dt, agent.d, 4., 2.)) return {true, agent.speed};
     }
   }
-  return false;
+  return {false, 0.};
 }
 
 tk::spline TrajectoryGenerator::getPath(int target_lane, int num_pts_prev) {
@@ -147,6 +204,7 @@ tk::spline TrajectoryGenerator::getPath(int target_lane, int num_pts_prev) {
 
   double final_s = 90.;
   double step_distance = 30.;
+  //double step_distance = target_lane == getLane(car.d()) ? 10. : 30.;
   int steps = final_s / step_distance;
   double final_d = lanes[target_lane];
 
@@ -191,10 +249,10 @@ std::pair<std::vector<double>, std::vector<double>>
 TrajectoryGenerator::generateTrajectory(int target_lane, double target_velocity, int pts_to_copy)
 {
   //int pts_to_copy = prev_path_x.size();
-  int path_pts_num = 30; // 50 points for 1 second of driving
-  if (target_lane != getLane(car.d()) && pts_to_copy <= path_pts_num) { //if target lane is different, but also if we are not in the middle of another lane change
-    path_pts_num = 100; // increase to 2 seconds to also get the change of lanes
-  }
+  int path_pts_num = 100; // 50 points for 1 second of driving
+//  if (target_lane != getLane(car.d()) && pts_to_copy <= path_pts_num) { //if target lane is different, but also if we are not in the middle of another lane change
+//    path_pts_num = 100; // increase to 2 seconds to also get the change of lanes
+//  }
   double target_v = target_velocity; //meters per second
   std::vector<double> next_x_vals;
   next_x_vals.reserve(path_pts_num);
@@ -366,35 +424,17 @@ void TrajectoryGenerator::update(const nlohmann::json& j) {
 }
 
 std::pair<std::vector<double>, std::vector<double>> TrajectoryGenerator::getOptimalTrajectory() {
-  std::vector<double> next_x_vals;
-  std::vector<double> next_y_vals;
-  int car_lane = getLane(car.d());
-  auto nearestCar = findClosestCarInLane();
-  int target_lane = car_lane;
-  if (nearestCar.first < 4) {
-    std::cout << nearestCar.first << " " << nearestCar.first << std::endl;
-    return generateTrajectory(target_lane, nearestCar.second - 5., prev_path_x.size());
+  std::pair<int, double> lane_speed = fsm.get_lane_speed();
+  //return generateTrajectory(lane_speed.first, lane_speed.second, prev_path_x.size());
+  auto trajectory = generateTrajectory(lane_speed.first, lane_speed.second, 30);
+  auto collision = check_collision(trajectory.first, trajectory.second);
+  if (collision.first == false) {
+    return trajectory;
   }
   else {
-    auto lane_speeds = getLaneSpeeds(40., 3.);
-    int fastest_lane = fastestLane(lane_speeds);
-    if (lane_speeds[fastest_lane] > lane_speeds[car_lane] + 2.0) {
-      if (std::abs(fastest_lane - car_lane) == 2) target_lane = 1;
-      else target_lane = fastest_lane;
-    }
-    double target_speed = lane_speeds[target_lane];
-    std::tie(next_x_vals, next_y_vals) = generateTrajectory(target_lane, target_speed, prev_path_x.size());
-    //if (target_lane != car_lane && !check_collision(next_x_vals, next_y_vals)) {
-    if (target_lane != car_lane && isLaneClear(target_lane, 8)) {
-      std::cout << "Change lane!" << std::endl;
-      return { next_x_vals, next_y_vals };
-    }
-    else {
-      if (target_lane != car_lane && check_collision(next_x_vals, next_y_vals)) std::cout << "Collision!" << std::endl;
-      return generateTrajectory(car_lane, lane_speeds[car_lane], prev_path_x.size());
-    }
+    std::cout << "Collision detected!\n";
+    return generateTrajectory(lane_speed.first, collision.second, 5);
   }
-  return {next_x_vals, next_y_vals};
 }
 //
 //std::pair<std::vector<double>, std::vector<double>> TrajectoryGenerator::getOptimalTrajectory() {
