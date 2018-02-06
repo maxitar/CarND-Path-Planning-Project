@@ -47,8 +47,6 @@ private:
   double speed_;
   double sin_t;
   double cos_t;
-  enum states {KL, PLCL, PLCR, LCL, LCR};
-  states state = KL;
 };
 
 // Other cars on the road

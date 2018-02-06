@@ -87,54 +87,65 @@ A really helpful resource for doing this project and creating smooth trajectorie
     git checkout e94b6e1
     ```
 
-## Editor Settings
+## Model Documentation
 
-We've purposefully kept editor configuration files out of this repo in order to
-keep it as simple and environment agnostic as possible. However, we recommend
-using the following settings:
+### Code Overview
 
-* indent using spaces
-* set tab width to 2 spaces (keeps the matrices in source code aligned)
+The code is organized in the following files
 
-## Code Style
+* `main.cpp` -- handles the communication with the simulator
+* `map.h/map.cpp` -- definition of the Map class, used to store the map waypoints and the transformations between XY and Frenet coordinates
+* `car.h` -- definitions of the Car and Agent classes. Class Car stores the data for the main car as well functions to transform between map and car coordinates. Class Agent is used to store data for other cars.
+* `helper_functions.h` -- several helpful functions for angle transformations, as well as the function for checking if the data recieved from the server is not empty
+* `trajectory_generator.h/.cpp` -- these files contain the main algorithms for generating the trajectory
 
-Please (do your best to) stick to [Google's C++ style guide](https://google.github.io/styleguide/cppguide.html).
+### Trajectory Generation
 
-## Project Instructions and Rubric
+The code for trajectory generation is mainly in the TrajectoryGenerator class and the process follows these steps
 
-Note: regardless of the changes you make, your project must be buildable using
-cmake and make!
+1. `main.cpp` calls the method `getOptimalTrajectory()` on its `gen` object
+2. A state machine defined in the subclass FSM updates its state and returns the target lane and speed
+3. A spline path is generated between current position and the target lane
+4. Using this path a trajectory that respects the maximum allowed speed and accleration is generated
+5. We evaluate this trajectory for possible collision with the other vehicles
+6. If there are no collisions, we return this trajectory. Otherwise check if the first possible collision occurs within 2 seconds and decrease the speed of the car to that of the other vehicle
 
+Note that since we need to preserve the state of the FSM, we define the `TrajectoryGenerator` object outside the main loop and capture it in the lambda.(_Lines 25, 27 in main.cpp_) 
 
-## Call for IDE Profiles Pull Requests
+Let us now go into a little more detail for steps 2.--6.
 
-Help your fellow students!
+#### Finite State Machine
 
-We decided to create Makefiles with cmake to keep this project as platform
-agnostic as possible. Similarly, we omitted IDE profiles in order to ensure
-that students don't feel pressured to use one IDE or another.
+The FSM has three possible states - Keep Lane (`KL`), Prepare Lane Change (`PLC`) and Lane Change (`LC`).
 
-However! I'd love to help people get up and running with their IDEs of choice.
-If you've created a profile for an IDE that you think other students would
-appreciate, we'd love to have you add the requisite profile files and
-instructions to ide_profiles/. For example if you wanted to add a VS Code
-profile, you'd add:
+* Keep Lane _(Lines 38--63 in trajectory_generator.cpp)_
 
-* /ide_profiles/vscode/.vscode
-* /ide_profiles/vscode/README.md
+In this state, we monitor the slowest speed in each lane 50 meters ahead. If we find a lane that is at least 1 meter per second faster than our current lane, we try to move into its direction and change the state to `PLC`. If this lane is not next to the current lane, we first set as target the middle lane.
+If there is no faster lane, we try to maintain at least 10 meters distance to the car in front. 
 
-The README should explain what the profile does, how to take advantage of it,
-and how to install it.
+* Prepare Lane Change _(Lines 74--119 in trajectory_generator.cpp)_
 
-Frankly, I've never been involved in a project with multiple IDE profiles
-before. I believe the best way to handle this would be to keep them out of the
-repo root to avoid clutter. My expectation is that most profiles will include
-instructions to copy files to a new location to get picked up by the IDE, but
-that's just a guess.
+Since the car must stay in this state until it finds an opening to switch lanes, we first check if our ultimate target lane (named `final_lane` in the code) is still the fastest. If it is not, then we revert back `KL` state. 
+After that we check if we have enough room to change lanes, as well as if given current speeds this space will be free for the next 3 seconds. To do this check, we find the speeds and the relative positions of the nearest agents in the target lane that are in front of and behind our car. If speeds of the agent in our current lane and either one of the agents (front or back) are close, we try to slow down a little in order to complete the lane change. Otherwise, the car moves as fast as possible
 
-One last note here: regardless of the IDE used, every submitted project must
-still be compilable with cmake and make./
+* Lane Change _(Lines 120--142 in trajectory_generator.cpp)_
 
-## How to write a README
-A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
+If the car is still partially in its original lane, we set the speed, so as not to hit cars in either one of the lanes. Once it crosses entirely into the target lane, we set the speed the respect only the target lane speeds and switch the state. If the target lane is the same as the final lane, we go to `KL` state. If the target and final lanes are different, we set the target to final lane and switch to `PLC` state.
 
+For path generation in `KL` and `PLC` state, we return the original lane. For `LC` we return the target lane.
+
+#### Path Generation _(Lines 181--228 in trajectory_generator.cpp)_
+
+The path is generated using spline interpolation. The spline is built on some of the points that are left from the previous trajectory as well as several new points. Specifically, we take 3 points that are 33 meters apart in s coordinate, starting from the last point that we copied from the previous path. Their d coordinate is set to the center of the lane that we get from the FSM. All calculations are performed in car coordinates (i.e. the car is the origin and its heading points to the x-axis).
+
+#### Trajectory Generation _(Lines 230--287 in trajectory_generator.cpp)_
+
+The trajectory is generated using some points from the previous trajectory (to ensure smooth paths), as well as new points found using the spline described above. Since the car visits each point alogn the trajectory every `dt=0.02` seconds, we must space them apart so as not to violate the constraints of the problem (max speed = 22m/s, max acceleration = 10m/s<sup>2</sup>, max jerk = 10m/s<sup>3</sup>). To estimate the speed, we first compute a small step in `x` direction and compute the spline value there (let us call it `y=f(x)`). Then the linearization of the path curve gives us the length of this section as l<sup>2</sup> = (x<sub>2</sub>-x<sub>1</sub>)<sup>2</sup> + (y<sub>2</sub>-y<sub>1</sub>)<sup>2</sup>, where (x<sub>1</sub>, y<sub>1</sub>) and (x<sub>2</sub>, y<sub>2</sub>) are the beginning and the end coordinates of the section, respectively. Then, using our desired speed we calculate what fraction of this length we travel (given by speed\*dt) and then also take this fraction to compute x and y (y is compute with the spline, not with the fraction). Since, the spline is a piece-wise cubic polynomial and we are using a linearization, the process is performed many times.
+
+Now, the speed itself can only change between two points by a maximum of 0.8\*dt\*max_acceleration, which is by about 0.16m/s. The 0.8 coefficient is used as a safety margin, to make sure that we are sufficiently away from the maximum acceleration.
+
+#### Collision detection _(Lines 151--180 in trajectory_generator.cpp)_
+
+Even though the FSM should provide relatively safe targets, each trajectory is evaluated for possible collisions with other vehicles. For example there are cases, where some of the agents change lanes suddenly and have much lower speed than our car. In such cases we keep only the first five points from the previous trajectory to ensure smooth transition and rapidly decelerate to the speed of the agent. The collision detection function gives us the time to collision and the speed of the other vehicle.
+
+In case we do not detect a collision, we return the original trajectory.

@@ -12,39 +12,43 @@ class TrajectoryGenerator {
   Car car;
   std::vector<double> prev_path_x;
   std::vector<double> prev_path_y;
-  std::vector<double> prev_path_x_car; //previous path x coord in car coordinates
-  std::vector<double> prev_path_y_car; //previous path y coord in car coordinates
   std::vector<Agent> agents;
-  const double dt = 0.02;
+  const double dt = 0.02; // The time step of the simulator is 0.02 seconds
   const int num_lanes = 3;
-  const double lanes[3] = { 2.0, 6.0, 10.0 };
+  const double lanes[3] = { 2.0, 6.0, 10.0 }; // The center of each lane
   class FSM {
-    enum states {KL, PLC, LC};
+    enum states {KL, PLC, LC}; // Valid states are Keep Lane (KL), Prepare Lane Change (PLC), and Lane Change (LC)
     states state = KL;
-    int origin_lane = 1;
-    int target_lane = 1;
-    int final_lane = 1;
-    int steps_in_lane = 0;
+    int origin_lane = 1; // The lane the car starts a manoeuvre from 
+    int target_lane = 1; // The target lane for the current manoeuvre
+    int final_lane  = 1; // The ultimate target lane
+    int steps_in_lane = 0; // Number of time steps that the car was in KL state
     double target_speed = 22.;
     TrajectoryGenerator& gen;
-    void update_state();
+    // Updates the finite state machine
+    void updateState();
   public:
     FSM(TrajectoryGenerator& generator) : gen(generator) {}
-    std::pair<int,double> get_lane_speed();
+    // Returns the target lane and target speed
+    std::pair<int,double> getLaneSpeed();
   } fsm{*this};
 
-  double check_collision(const tk::spline& path, double last_x, double speed);
-  std::tuple<bool,double,double> check_collision(const std::vector<double>& path_x, const std::vector<double>& path_y);
+  // Check for collisions along a trajectory
+  // Returns {collision_detected, time_to_collision, speed_of_agent_in_collision}
+  std::tuple<bool,double,double> checkCollision(const std::vector<double>& path_x, const std::vector<double>& path_y);
+  // Return a spline with the trajectory into 'target_lane' 
+  // using 'num_pts_prev' from the previous trajectory 
   tk::spline getPath(int target_lane, int num_pts_prev);
   std::pair<std::vector<double>, std::vector<double>> generateTrajectory
     (int target_lane, double target_velocity, int pts_to_copy);
   std::array<double, 3> getLaneSpeeds(double front_distance = 50., double back_distance = 20.);
   std::pair<double, double> findClosestCarInLane();
   std::pair<double, double> findNextCarInLane(int lane, bool in_front);
-  bool isLaneClear(int target_lane, double margin_s);
 public:
   TrajectoryGenerator(const Map& map_) : map(map_) {};
+  // Update the data for the generator
   void update(const nlohmann::json& telemetry);
+  // Compute and return the optimal trajectory
   std::pair<std::vector<double>, std::vector<double>> getOptimalTrajectory();
 };
 
