@@ -98,6 +98,7 @@ The code is organized in the following files
 * `car.h` -- definitions of the Car and Agent classes. Class Car stores the data for the main car as well functions to transform between map and car coordinates. Class Agent is used to store data for other cars.
 * `helper_functions.h` -- several helpful functions for angle transformations, as well as the function for checking if the data recieved from the server is not empty
 * `trajectory_generator.h/.cpp` -- these files contain the main algorithms for generating the trajectory
+* `spline.h` -- a GPL licensed spline library sourced from http://kluge.in-chemnitz.de/opensource/spline/
 
 ### Trajectory Generation
 
